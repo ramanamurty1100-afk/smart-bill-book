@@ -148,13 +148,20 @@ def create_bill():
                 amt=round(qty*float(p["price"]),2); subtotal+=amt
                 clean.append((p,qty,amt))
             discount=max(0,float(d.get("discount",0))); rate=max(0,float(d.get("gst_rate",0)))
-            taxable=max(0,subtotal-discount); gst=round(taxable*rate/100,2); total=round(taxable+gst,2)
+            if discount>subtotal: raise ValueError()
+            taxable=round(subtotal-discount,2); gst_type=d.get("gst_type","none")
+            if gst_type not in ("none","intra","inter"): raise ValueError()
+            gst=round(taxable*rate/100,2) if gst_type!="none" else 0.0
+            cgst=round(gst/2,2) if gst_type=="intra" else 0.0
+            sgst=round(gst-cgst,2) if gst_type=="intra" else 0.0
+            igst=gst if gst_type=="inter" else 0.0
+            raw_total=taxable+gst; total=round(raw_total); round_off=round(total-raw_total,2)
             paid=min(max(0,float(d.get("paid",0))),total)
             s=c.execute("SELECT bill_prefix FROM settings WHERE user_id=?",(uid,)).fetchone()
             count=c.execute("SELECT COUNT(*) n FROM bills WHERE user_id=?",(uid,)).fetchone()["n"]+1
             billno=f"{s['bill_prefix']}-{count:05d}"
-            cur=c.execute("""INSERT INTO bills(user_id,bill_no,customer_name,customer_phone,subtotal,discount,gst_rate,gst_amount,total,paid,method,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(uid,billno,d.get("customer_name") or "Walk-in Customer",d.get("customer_phone",""),subtotal,discount,rate,gst,total,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds")))
+            cur=c.execute("""INSERT INTO bills(user_id,bill_no,customer_name,customer_phone,subtotal,discount,gst_rate,gst_amount,total,paid,method,created_at,gst_type,cgst,sgst,igst,round_off)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(uid,billno,d.get("customer_name") or "Walk-in Customer",d.get("customer_phone",""),subtotal,discount,rate,gst,total,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),gst_type,cgst,sgst,igst,round_off))
             bid=cur.lastrowid
             for p,qty,amt in clean:
                 c.execute("INSERT INTO bill_items(bill_id,product_id,name,qty,price,amount) VALUES(?,?,?,?,?,?)",(bid,p["id"],p["name"],qty,p["price"],amt))
