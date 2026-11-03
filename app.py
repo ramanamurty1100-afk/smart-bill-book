@@ -23,7 +23,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, phone TEXT DEFAULT '', FOREIGN KEY(user_id) REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS bills(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, bill_no TEXT NOT NULL, customer_name TEXT DEFAULT 'Walk-in Customer', customer_phone TEXT DEFAULT '', subtotal REAL NOT NULL, discount REAL DEFAULT 0, gst_rate REAL DEFAULT 0, gst_amount REAL DEFAULT 0, total REAL NOT NULL, paid REAL DEFAULT 0, method TEXT DEFAULT 'Cash', created_at TEXT NOT NULL, UNIQUE(user_id,bill_no), FOREIGN KEY(user_id) REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS bill_items(id INTEGER PRIMARY KEY, bill_id INTEGER NOT NULL, product_id INTEGER, name TEXT NOT NULL, qty REAL NOT NULL, price REAL NOT NULL, amount REAL NOT NULL, FOREIGN KEY(bill_id) REFERENCES bills(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL, category TEXT DEFAULT 'General', amount REAL NOT NULL, expense_date TEXT NOT NULL, notes TEXT DEFAULT '', FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, supplier TEXT DEFAULT '', invoice_no TEXT DEFAULT '', total REAL NOT NULL, purchase_date TEXT NOT NULL, notes TEXT DEFAULT '', FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS purchase_items(id INTEGER PRIMARY KEY, purchase_id INTEGER NOT NULL, product_id INTEGER NOT NULL, qty REAL NOT NULL, cost_price REAL NOT NULL, FOREIGN KEY(purchase_id) REFERENCES purchases(id) ON DELETE CASCADE, FOREIGN KEY(product_id) REFERENCES products(id));
+        CREATE TABLE IF NOT EXISTS payments(id INTEGER PRIMARY KEY, bill_id INTEGER NOT NULL, amount REAL NOT NULL, method TEXT DEFAULT 'Cash', paid_at TEXT NOT NULL, notes TEXT DEFAULT '', FOREIGN KEY(bill_id) REFERENCES bills(id) ON DELETE CASCADE);
         """)
+        cols={r["name"] for r in c.execute("PRAGMA table_info(bills)").fetchall()}
+        for name, decl in [("gst_type","TEXT DEFAULT 'none'"),("cgst","REAL DEFAULT 0"),("sgst","REAL DEFAULT 0"),("igst","REAL DEFAULT 0"),("round_off","REAL DEFAULT 0")]:
+            if name not in cols: c.execute("ALTER TABLE bills ADD COLUMN " + name + " " + decl)
         if not c.execute("SELECT id FROM users LIMIT 1").fetchone():
             uid = c.execute("INSERT INTO users(username,password) VALUES(?,?)", ("demo", generate_password_hash("demo1234"))).lastrowid
             c.execute("INSERT INTO settings(user_id,shop_name) VALUES(?,?)", (uid,"Demo Kirana Store"))
@@ -164,6 +171,99 @@ def summary():
         due=c.execute("SELECT COALESCE(SUM(total-paid),0) v FROM bills WHERE user_id=?",(session["uid"],)).fetchone()
         low=c.execute("SELECT COUNT(*) n FROM products WHERE user_id=? AND stock<=low_stock",(session["uid"],)).fetchone()
     return jsonify(sales=float(sales["v"]),count=sales["n"],due=float(due["v"]),low=low["n"])
+
+
+@app.get("/api/customers")
+@auth
+def list_customers():
+    with db() as c:
+        rows=c.execute("SELECT id,name,phone FROM customers WHERE user_id=? ORDER BY name",(session["uid"],)).fetchall()
+    return jsonify([rowdict(x) for x in rows])
+
+@app.post("/api/customers")
+@auth
+def add_customer():
+    d=request.get_json(force=True); name=(d.get("name") or "").strip()
+    if not name: return jsonify(error="Customer name is required"),400
+    with db() as c:
+        cur=c.execute("INSERT INTO customers(user_id,name,phone) VALUES(?,?,?)",(session["uid"],name,d.get("phone","").strip()))
+    return jsonify(ok=True,id=cur.lastrowid)
+
+@app.get("/api/expenses")
+@auth
+def list_expenses():
+    with db() as c:
+        rows=c.execute("SELECT * FROM expenses WHERE user_id=? ORDER BY expense_date DESC,id DESC LIMIT 500",(session["uid"],)).fetchall()
+    return jsonify([rowdict(x) for x in rows])
+
+@app.post("/api/expenses")
+@auth
+def add_expense():
+    d=request.get_json(force=True)
+    try:
+        amount=float(d.get("amount",0))
+        if amount<=0: raise ValueError()
+        with db() as c:
+            cur=c.execute("INSERT INTO expenses(user_id,title,category,amount,expense_date,notes) VALUES(?,?,?,?,?,?)",(session["uid"],(d.get("title") or "").strip(),d.get("category","General"),amount,d.get("expense_date") or date.today().isoformat(),d.get("notes","")))
+        return jsonify(ok=True,id=cur.lastrowid)
+    except (ValueError,TypeError): return jsonify(error="Enter a valid expense amount"),400
+
+@app.get("/api/purchases")
+@auth
+def list_purchases():
+    with db() as c:
+        rows=c.execute("SELECT * FROM purchases WHERE user_id=? ORDER BY purchase_date DESC,id DESC LIMIT 200",(session["uid"],)).fetchall()
+    return jsonify([rowdict(x) for x in rows])
+
+@app.post("/api/purchases")
+@auth
+def add_purchase():
+    d=request.get_json(force=True); items=d.get("items",[])
+    if not items: return jsonify(error="Add at least one purchase item"),400
+    try:
+        total=0; clean=[]
+        with db() as c:
+            for it in items:
+                pid=int(it["product_id"]); qty=float(it["qty"]); cost=float(it["cost_price"])
+                if qty<=0 or cost<0: raise ValueError()
+                p=c.execute("SELECT id FROM products WHERE id=? AND user_id=?",(pid,session["uid"])).fetchone()
+                if not p: raise ValueError()
+                total+=qty*cost; clean.append((pid,qty,cost))
+            cur=c.execute("INSERT INTO purchases(user_id,supplier,invoice_no,total,purchase_date,notes) VALUES(?,?,?,?,?,?)",(session["uid"],d.get("supplier",""),d.get("invoice_no",""),round(total,2),d.get("purchase_date") or date.today().isoformat(),d.get("notes","")))
+            for pid,qty,cost in clean:
+                c.execute("INSERT INTO purchase_items(purchase_id,product_id,qty,cost_price) VALUES(?,?,?,?)",(cur.lastrowid,pid,qty,cost))
+                c.execute("UPDATE products SET stock=stock+? WHERE id=? AND user_id=?",(qty,pid,session["uid"]))
+        return jsonify(ok=True,id=cur.lastrowid,total=round(total,2))
+    except (ValueError,KeyError,TypeError): return jsonify(error="Invalid purchase details"),400
+
+@app.post("/api/bills/<int:bid>/payments")
+@auth
+def add_bill_payment(bid):
+    d=request.get_json(force=True)
+    try:
+        amount=float(d.get("amount",0))
+        if amount<=0: raise ValueError()
+        with db() as c:
+            b=c.execute("SELECT * FROM bills WHERE id=? AND user_id=?",(bid,session["uid"])).fetchone()
+            if not b: return jsonify(error="Bill not found"),404
+            due=round(float(b["total"])-float(b["paid"]),2)
+            if amount>due: return jsonify(error="Payment exceeds outstanding balance"),400
+            c.execute("INSERT INTO payments(bill_id,amount,method,paid_at,notes) VALUES(?,?,?,?,?)",(bid,amount,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),d.get("notes","")))
+            c.execute("UPDATE bills SET paid=paid+? WHERE id=?",(amount,bid))
+        return jsonify(ok=True,remaining=round(due-amount,2))
+    except (ValueError,TypeError): return jsonify(error="Enter a valid payment amount"),400
+
+@app.get("/api/reports")
+@auth
+def reports():
+    uid=session["uid"]
+    with db() as c:
+        sales=c.execute("SELECT COALESCE(SUM(total),0) total,COALESCE(SUM(paid),0) received,COUNT(*) bills FROM bills WHERE user_id=?",(uid,)).fetchone()
+        expenses=c.execute("SELECT COALESCE(SUM(amount),0) total FROM expenses WHERE user_id=?",(uid,)).fetchone()
+        stock=c.execute("SELECT COUNT(*) products,COALESCE(SUM(stock*price),0) value FROM products WHERE user_id=?",(uid,)).fetchone()
+        monthly=c.execute("SELECT substr(created_at,1,7) month,ROUND(SUM(total),2) sales,COUNT(*) bills FROM bills WHERE user_id=? GROUP BY substr(created_at,1,7) ORDER BY month DESC LIMIT 12",(uid,)).fetchall()
+    return jsonify(sales=rowdict(sales),expenses=float(expenses["total"]),stock=rowdict(stock),monthly=[rowdict(x) for x in monthly],estimated_net=round(float(sales["total"])-float(expenses["total"]),2))
+
 
 init_db()
 if __name__ == "__main__":
