@@ -198,7 +198,7 @@ def create_bill():
     if not items: return jsonify(error="Add at least one item"),400
     customer_phone=(d.get("customer_phone") or "").strip()
     if customer_phone and not valid_indian_mobile(customer_phone): return jsonify(error="Enter a valid 10-digit Indian mobile number starting with 6, 7, 8 or 9"),400
-    uid=session["uid"
+    uid=session["uid"]
     try:
         with db() as c:
             c.execute("BEGIN IMMEDIATE")
