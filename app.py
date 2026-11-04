@@ -38,7 +38,7 @@ class PgConnection:
             cur = self.conn.cursor()
             cur.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s ORDER BY ordinal_position", (table,))
             return PgCursor(cur)
-        q = re.sub(r"date\(created_at\)", "(created_at::date)", q, flags=re.I).replace("?", "%s")
+        q = re.sub(r"date\(created_at\)", "(created_at::date)", q, flags=re.I).replace("ROUND(SUM(total),2)", "ROUND(SUM(total)::numeric,2)").replace("?", "%s")
         if q.upper() == "BEGIN IMMEDIATE": q = "BEGIN"
         is_insert = q.upper().startswith("INSERT INTO ") and " RETURNING " not in q.upper() and not q.upper().startswith("INSERT INTO SETTINGS(")
         if is_insert: q += " RETURNING id"
@@ -349,7 +349,7 @@ def reports():
         sales=c.execute("SELECT COALESCE(SUM(total),0) total,COALESCE(SUM(paid),0) received,COUNT(*) bills FROM bills WHERE user_id=?",(uid,)).fetchone()
         expenses=c.execute("SELECT COALESCE(SUM(amount),0) total FROM expenses WHERE user_id=?",(uid,)).fetchone()
         stock=c.execute("SELECT COUNT(*) products,COALESCE(SUM(stock*price),0) value FROM products WHERE user_id=?",(uid,)).fetchone()
-        monthly=c.execute('SELECT substr(created_at,1,7) AS "month",ROUND(SUM(total)::numeric,2) sales,COUNT(*) bills FROM bills WHERE user_id=? GROUP BY substr(created_at,1,7) ORDER BY "month" DESC LIMIT 12',(uid,)).fetchall()
+        monthly=c.execute('SELECT substr(created_at,1,7) AS "month",ROUND(SUM(total),2) sales,COUNT(*) bills FROM bills WHERE user_id=? GROUP BY substr(created_at,1,7) ORDER BY "month" DESC LIMIT 12',(uid,)).fetchall()
     return jsonify(sales=rowdict(sales),expenses=float(expenses["total"]),stock=rowdict(stock),monthly=[rowdict(x) for x in monthly],estimated_net=round(float(sales["total"])-float(expenses["total"]),2))
 
 
