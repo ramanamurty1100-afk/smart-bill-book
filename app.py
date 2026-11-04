@@ -269,6 +269,25 @@ def add_bill_payment(bid):
         return jsonify(ok=True,remaining=round(due-amount,2))
     except (ValueError,TypeError): return jsonify(error="Enter a valid payment amount"),400
 
+@app.get("/api/backup")
+@auth
+def backup():
+    uid=session["uid"]
+    tables=("settings","products","customers","bills","bill_items","payments","purchases","purchase_items","expenses")
+    data={}
+    with db() as c:
+        for table in tables:
+            if table=="settings":
+                rows=c.execute("SELECT * FROM settings WHERE user_id=?",(uid,)).fetchall()
+            elif table in ("bill_items","payments"):
+                rows=c.execute("SELECT t.* FROM "+table+" t JOIN bills b ON b.id=t.bill_id WHERE b.user_id=?",(uid,)).fetchall()
+            elif table=="purchase_items":
+                rows=c.execute("SELECT t.* FROM purchase_items t JOIN purchases p ON p.id=t.purchase_id WHERE p.user_id=?",(uid,)).fetchall()
+            else:
+                rows=c.execute("SELECT * FROM "+table+" WHERE user_id=?",(uid,)).fetchall()
+            data[table]=[rowdict(r) for r in rows]
+    return jsonify(format="smart-bill-book-backup-v1",exported_at=datetime.now().isoformat(timespec="seconds"),data=data)
+
 @app.get("/api/reports")
 @auth
 def reports():
