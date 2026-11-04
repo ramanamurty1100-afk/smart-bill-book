@@ -37,6 +37,10 @@ class BillBookFlowTests(unittest.TestCase):
         self.assertEqual(product_after["stock"],13)
         report=self.client.get("/api/reports")
         self.assertEqual(report.status_code,200)
+        backup=self.client.get("/api/backup")
+        self.assertEqual(backup.status_code,200)
+        self.assertEqual(backup.get_json()["format"],"smart-bill-book-backup-v1")
+        self.assertEqual(len(backup.get_json()["data"]["bills"]),1)
 
     def test_rejects_invalid_product_and_payment(self):
         self.assertEqual(self.client.post("/api/products",json={"name":"Bad","price":-1,"stock":2}).status_code,400)
