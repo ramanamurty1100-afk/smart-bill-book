@@ -100,9 +100,12 @@ def products():
 def add_product():
     d=request.get_json(force=True)
     try:
+        name=(d.get("name") or "").strip()
+        price=float(d["price"]); stock=float(d.get("stock",0)); low=float(d.get("low_stock",5))
+        if not name or price<0 or stock<0 or low<0: raise ValueError()
         with db() as c:
             c.execute("INSERT INTO products(user_id,name,sku,price,stock,low_stock) VALUES(?,?,?,?,?,?)",
-            (session["uid"],d["name"].strip(),d.get("sku",""),float(d["price"]),float(d.get("stock",0)),float(d.get("low_stock",5))))
+            (session["uid"],name,d.get("sku",""),price,stock,low))
         return jsonify(ok=True)
     except (ValueError,KeyError): return jsonify(error="Enter valid product details"),400
 
@@ -140,6 +143,7 @@ def create_bill():
     uid=session["uid"]
     try:
         with db() as c:
+            c.execute("BEGIN IMMEDIATE")
             clean=[]; subtotal=0
             for it in items:
                 pid=int(it["product_id"]); qty=float(it["qty"])
@@ -213,8 +217,8 @@ def list_expenses():
 def add_expense():
     d=request.get_json(force=True)
     try:
-        amount=float(d.get("amount",0))
-        if amount<=0: raise ValueError()
+        amount=float(d.get("amount",0)); title=(d.get("title") or "").strip()
+        if amount<=0 or not title: raise ValueError()
         with db() as c:
             cur=c.execute("INSERT INTO expenses(user_id,title,category,amount,expense_date,notes) VALUES(?,?,?,?,?,?)",(session["uid"],(d.get("title") or "").strip(),d.get("category","General"),amount,d.get("expense_date") or date.today().isoformat(),d.get("notes","")))
         return jsonify(ok=True,id=cur.lastrowid)
