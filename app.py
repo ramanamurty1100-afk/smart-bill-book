@@ -40,6 +40,20 @@ def auth(fn):
 
 def rowdict(r): return dict(r) if r else None
 
+@app.get("/api/backup")
+@auth
+def backup():
+    uid=session["uid"]
+    data={}
+    with db() as c:
+        for table in ("settings","products","customers","bills"):
+            rows=c.execute("SELECT * FROM "+table+" WHERE user_id=?",(uid,)).fetchall()
+            data[table]=[rowdict(r) for r in rows]
+        rows=c.execute("SELECT i.* FROM bill_items i JOIN bills b ON b.id=i.bill_id WHERE b.user_id=?",(uid,)).fetchall()
+        data["bill_items"]=[rowdict(r) for r in rows]
+    return jsonify(format="smart-bill-book-backup-v1",exported_at=datetime.now().isoformat(timespec="seconds"),data=data)
+
+
 @app.get("/")
 def home(): return send_from_directory("static", "index.html")
 
