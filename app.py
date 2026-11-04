@@ -24,7 +24,7 @@ class PgCursor:
 
 class PgConnection:
     def __init__(self, url):
-        self.conn = psycopg2.connect(url, cursor_factory=RealDictCursor, sslmode="require")
+        self.conn = psycopg2.connect(url, cursor_factory=RealDictCursor, sslmode="prefer")
     def __enter__(self): return self
     def __exit__(self, typ, value, tb):
         if typ is None: self.conn.commit()
