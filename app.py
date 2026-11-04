@@ -40,7 +40,7 @@ class PgConnection:
             return PgCursor(cur)
         q = re.sub(r"date\(created_at\)", "(created_at::date)", q, flags=re.I).replace("?", "%s")
         if q.upper() == "BEGIN IMMEDIATE": q = "BEGIN"
-        is_insert = q.upper().startswith("INSERT INTO ") and " RETURNING " not in q.upper()
+        is_insert = q.upper().startswith("INSERT INTO ") and " RETURNING " not in q.upper() and not q.upper().startswith("INSERT INTO SETTINGS ")
         if is_insert: q += " RETURNING id"
         cur = self.conn.cursor()
         cur.execute(q, params)
