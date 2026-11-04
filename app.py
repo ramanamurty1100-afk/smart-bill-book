@@ -98,6 +98,9 @@ def auth(fn):
         return fn(*a, **kw)
     return wrapper
 
+def valid_indian_mobile(value):
+    return bool(re.fullmatch(r"[6-9][0-9]{9}", str(value or "")))
+
 def rowdict(r): return dict(r) if r else None
 
 @app.get("/")
@@ -193,7 +196,9 @@ def bill_detail(bid):
 def create_bill():
     d=request.get_json(force=True); items=d.get("items",[])
     if not items: return jsonify(error="Add at least one item"),400
-    uid=session["uid"]
+    customer_phone=(d.get("customer_phone") or "").strip()
+    if customer_phone and not valid_indian_mobile(customer_phone): return jsonify(error="Enter a valid 10-digit Indian mobile number starting with 6, 7, 8 or 9"),400
+    uid=session["uid"
     try:
         with db() as c:
             c.execute("BEGIN IMMEDIATE")
@@ -221,7 +226,7 @@ def create_bill():
             count=c.execute("SELECT COUNT(*) n FROM bills WHERE user_id=?",(uid,)).fetchone()["n"]+1
             billno=f"{s['bill_prefix']}-{count:05d}"
             cur=c.execute("""INSERT INTO bills(user_id,bill_no,customer_name,customer_phone,subtotal,discount,gst_rate,gst_amount,total,paid,method,created_at,gst_type,cgst,sgst,igst,round_off)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(uid,billno,d.get("customer_name") or "Walk-in Customer",d.get("customer_phone",""),subtotal,discount,rate,gst,total,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),gst_type,cgst,sgst,igst,round_off))
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(uid,billno,d.get("customer_name") or "Walk-in Customer",customer_phone,subtotal,discount,rate,gst,total,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),gst_type,cgst,sgst,igst,round_off))
             bid=cur.lastrowid
             if paid>0:
                 c.execute("INSERT INTO payments(bill_id,amount,method,paid_at,notes) VALUES(?,?,?,?,?)",(bid,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),"Initial payment"))
@@ -252,10 +257,11 @@ def list_customers():
 @app.post("/api/customers")
 @auth
 def add_customer():
-    d=request.get_json(force=True); name=(d.get("name") or "").strip()
+    d=request.get_json(force=True); name=(d.get("name") or "").strip(); phone=(d.get("phone") or "").strip()
     if not name: return jsonify(error="Customer name is required"),400
+    if phone and not valid_indian_mobile(phone): return jsonify(error="Enter a valid 10-digit Indian mobile number starting with 6, 7, 8 or 9"),400
     with db() as c:
-        cur=c.execute("INSERT INTO customers(user_id,name,phone) VALUES(?,?,?)",(session["uid"],name,d.get("phone","").strip()))
+        cur=c.execute("INSERT INTO customers(user_id,name,phone) VALUES(?,?,?)",(session["uid"],name,phone))
     return jsonify(ok=True,id=cur.lastrowid)
 
 @app.get("/api/expenses")
