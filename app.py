@@ -51,7 +51,8 @@ def backup():
             data[table]=[rowdict(r) for r in rows]
         rows=c.execute("SELECT i.* FROM bill_items i JOIN bills b ON b.id=i.bill_id WHERE b.user_id=?",(uid,)).fetchall()
         data["bill_items"]=[rowdict(r) for r in rows]
-    payload={"format":"smart-bill-book-backup-v1","exported_at":datetime.now().isoformat(timespec="seconds"),"data":data}\n    return Response(json.dumps(payload,ensure_ascii=False,indent=2),mimetype="application/json",headers={"Content-Disposition":"attachment; filename=smart-bill-book-backup.json"})
+    payload={"format":"smart-bill-book-backup-v1","exported_at":datetime.now().isoformat(timespec="seconds"),"data":data}
+    return Response(json.dumps(payload,ensure_ascii=False,indent=2),mimetype="application/json",headers={"Content-Disposition":"attachment; filename=smart-bill-book-backup.json"})
 
 
 @app.get("/")
