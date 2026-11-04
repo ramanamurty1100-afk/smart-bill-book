@@ -129,7 +129,7 @@ def bill_detail(bid):
         if not b: return jsonify(error="Bill not found"),404
         items=c.execute("SELECT * FROM bill_items WHERE bill_id=?",(bid,)).fetchall()
         s=c.execute("SELECT * FROM settings WHERE user_id=?",(session["uid"],)).fetchone()
-    payments=c.execute("SELECT amount,method,paid_at,notes FROM payments WHERE bill_id=? ORDER BY id",(bid,)).fetchall()
+        payments=c.execute("SELECT amount,method,paid_at,notes FROM payments WHERE bill_id=? ORDER BY id",(bid,)).fetchall()
     return jsonify(bill=rowdict(b),items=[rowdict(x) for x in items],payments=[rowdict(x) for x in payments],settings=rowdict(s))
 
 @app.post("/api/bills")
