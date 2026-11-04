@@ -129,7 +129,8 @@ def bill_detail(bid):
         if not b: return jsonify(error="Bill not found"),404
         items=c.execute("SELECT * FROM bill_items WHERE bill_id=?",(bid,)).fetchall()
         s=c.execute("SELECT * FROM settings WHERE user_id=?",(session["uid"],)).fetchone()
-    return jsonify(bill=rowdict(b),items=[rowdict(x) for x in items],settings=rowdict(s))
+    payments=c.execute("SELECT amount,method,paid_at,notes FROM payments WHERE bill_id=? ORDER BY id",(bid,)).fetchall()
+    return jsonify(bill=rowdict(b),items=[rowdict(x) for x in items],payments=[rowdict(x) for x in payments],settings=rowdict(s))
 
 @app.post("/api/bills")
 @auth
@@ -156,13 +157,17 @@ def create_bill():
             sgst=round(gst-cgst,2) if gst_type=="intra" else 0.0
             igst=gst if gst_type=="inter" else 0.0
             raw_total=taxable+gst; total=round(raw_total); round_off=round(total-raw_total,2)
-            paid=min(max(0,float(d.get("paid",0))),total)
+            paid=float(d.get("paid",0))
+            if paid<0 or paid>total: raise ValueError()
+            if rate>100: raise ValueError()
             s=c.execute("SELECT bill_prefix FROM settings WHERE user_id=?",(uid,)).fetchone()
             count=c.execute("SELECT COUNT(*) n FROM bills WHERE user_id=?",(uid,)).fetchone()["n"]+1
             billno=f"{s['bill_prefix']}-{count:05d}"
             cur=c.execute("""INSERT INTO bills(user_id,bill_no,customer_name,customer_phone,subtotal,discount,gst_rate,gst_amount,total,paid,method,created_at,gst_type,cgst,sgst,igst,round_off)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(uid,billno,d.get("customer_name") or "Walk-in Customer",d.get("customer_phone",""),subtotal,discount,rate,gst,total,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),gst_type,cgst,sgst,igst,round_off))
             bid=cur.lastrowid
+            if paid>0:
+                c.execute("INSERT INTO payments(bill_id,amount,method,paid_at,notes) VALUES(?,?,?,?,?)",(bid,paid,d.get("method","Cash"),datetime.now().isoformat(timespec="seconds"),"Initial payment"))
             for p,qty,amt in clean:
                 c.execute("INSERT INTO bill_items(bill_id,product_id,name,qty,price,amount) VALUES(?,?,?,?,?,?)",(bid,p["id"],p["name"],qty,p["price"],amt))
                 c.execute("UPDATE products SET stock=stock-? WHERE id=?",(qty,p["id"]))
