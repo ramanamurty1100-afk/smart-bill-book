@@ -1,7 +1,7 @@
-import os, sqlite3, secrets
+import os, sqlite3, secrets, json
 from datetime import datetime, date
 from functools import wraps
-from flask import Flask, request, jsonify, session, send_from_directory, abort
+from flask import Flask, request, jsonify, session, send_from_directory, abort, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder="static")
@@ -51,7 +51,7 @@ def backup():
             data[table]=[rowdict(r) for r in rows]
         rows=c.execute("SELECT i.* FROM bill_items i JOIN bills b ON b.id=i.bill_id WHERE b.user_id=?",(uid,)).fetchall()
         data["bill_items"]=[rowdict(r) for r in rows]
-    return jsonify(format="smart-bill-book-backup-v1",exported_at=datetime.now().isoformat(timespec="seconds"),data=data)
+    payload={"format":"smart-bill-book-backup-v1","exported_at":datetime.now().isoformat(timespec="seconds"),"data":data}\n    return Response(json.dumps(payload,ensure_ascii=False,indent=2),mimetype="application/json",headers={"Content-Disposition":"attachment; filename=smart-bill-book-backup.json"})
 
 
 @app.get("/")
