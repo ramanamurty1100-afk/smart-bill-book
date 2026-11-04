@@ -1,4 +1,10 @@
-import os, sqlite3, secrets
+import os, sqlite3, secrets, re
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
 from datetime import datetime, date
 from functools import wraps
 from flask import Flask, request, jsonify, session, send_from_directory, abort
@@ -6,9 +12,56 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-before-deploying")
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 DB = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "billbook.db"))
 
+class PgCursor:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor, self.lastrowid = cursor, lastrowid
+    def fetchone(self): return self._cursor.fetchone()
+    def fetchall(self): return self._cursor.fetchall()
+    def __iter__(self): return iter(self._cursor)
+
+class PgConnection:
+    def __init__(self, url):
+        self.conn = psycopg2.connect(url, cursor_factory=RealDictCursor, sslmode="require")
+    def __enter__(self): return self
+    def __exit__(self, typ, value, tb):
+        if typ is None: self.conn.commit()
+        else: self.conn.rollback()
+        self.conn.close()
+    def execute(self, sql, params=()):
+        q = sql.strip()
+        if q.upper() == "PRAGMA FOREIGN_KEYS=ON": return PgCursor(self.conn.cursor())
+        if q.upper().startswith("PRAGMA TABLE_INFO("):
+            table = q[q.find("(")+1:q.rfind(")")].strip()
+            cur = self.conn.cursor()
+            cur.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s ORDER BY ordinal_position", (table,))
+            return PgCursor(cur)
+        q = re.sub(r"date\(created_at\)", "(created_at::date)", q, flags=re.I).replace("?", "%s")
+        if q.upper() == "BEGIN IMMEDIATE": q = "BEGIN"
+        is_insert = q.upper().startswith("INSERT INTO ") and " RETURNING " not in q.upper()
+        if is_insert: q += " RETURNING id"
+        cur = self.conn.cursor()
+        cur.execute(q, params)
+        last_id = None
+        if is_insert:
+            row = cur.fetchone()
+            last_id = row["id"] if row else None
+        return PgCursor(cur, last_id)
+    def executemany(self, sql, seq):
+        cur = self.conn.cursor()
+        cur.executemany(sql.replace("?", "%s"), seq)
+        return PgCursor(cur)
+    def executescript(self, script):
+        if DATABASE_URL: script = script.replace("INTEGER PRIMARY KEY", "SERIAL PRIMARY KEY")
+        for statement in script.split(";"):
+            if statement.strip(): self.execute(statement)
+
 def db():
+    if DATABASE_URL:
+        if psycopg2 is None: raise RuntimeError("PostgreSQL driver is not installed")
+        return PgConnection(DATABASE_URL)
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -68,7 +121,7 @@ def register():
             c.execute("INSERT INTO settings(user_id,shop_name) VALUES(?,?)",(uid,"My Shop"))
         session.clear(); session["uid"]=uid
         return jsonify(ok=True)
-    except sqlite3.IntegrityError: return jsonify(error="Username already exists"),409
+    except (sqlite3.IntegrityError, psycopg2.IntegrityError if psycopg2 else sqlite3.IntegrityError): return jsonify(error="Username already exists"),409
 
 @app.post("/api/logout")
 def logout(): session.clear(); return jsonify(ok=True)
